@@ -9,6 +9,7 @@ Env:
 import asyncio
 import logging
 import os
+import time
 import threading
 from contextlib import asynccontextmanager
 import numpy as np
@@ -149,20 +150,34 @@ async def generate_speech_stream(request: SpeechRequest):
     tokenizer = get_tokenizer()
     loop = asyncio.get_event_loop()
     codes_queue: asyncio.Queue[list | None] = asyncio.Queue(maxsize=2)  # backpressure
-
     async def producer() -> None:
         audio_codes = []
+        first_chunk_time = None
+        last_chunk_time = None
         try:
             async for audio_code in interface.generate_custom_voice_async(
                 text=request.text,
                 language=request.language,
                 speaker=request.speaker,
             ):
+                current_time = time.time()
+                if first_chunk_time is None:
+                    first_chunk_time = current_time
+                if last_chunk_time is not None:
+                    inner_latency = current_time - last_chunk_time
+                    print(f"[producer] inner chunk latency: {inner_latency*1000:.2f}ms")
+                last_chunk_time = current_time
+                
                 audio_codes.append(audio_code)
-                if len(audio_codes) % 2 == 0:  # decode every 4 chunks
+                if len(audio_codes) % 4 == 0:  # decode every 4 chunks
                     await codes_queue.put(list(audio_codes))
+            
+            if first_chunk_time is not None:
+                first_chunk_latency = last_chunk_time - first_chunk_time
+                print(f"[producer] first chunk latency: {first_chunk_latency*1000:.2f}ms")
+            
             # final batch if not already sent (e.g. 13 chunks: sent at 12, need 13)
-            if audio_codes and len(audio_codes) % 2 != 0:
+            if audio_codes and len(audio_codes) % 4 != 0:
                 await codes_queue.put(list(audio_codes))
         finally:
             await codes_queue.put(None)  # sentinel
