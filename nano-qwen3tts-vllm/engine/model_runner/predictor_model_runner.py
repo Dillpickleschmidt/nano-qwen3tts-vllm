@@ -18,8 +18,8 @@ from multiprocessing.synchronize import Event
 
 
 class PredictorSequence(Sequence):
-    def __init__(self, token_ids: Optional[list[int]], sampling_params = SamplingParams(), input_embeds: Optional[torch.Tensor] = None, generation_steps: int = 0):
-        super().__init__(token_ids, sampling_params, input_embeds)
+    def __init__(self, token_ids: Optional[list[int]], sampling_params = SamplingParams(), input_embeds: Optional[torch.Tensor] = None, generation_steps: int = 0, request_id: Optional[str] = None):
+        super().__init__(token_ids, sampling_params, input_embeds, request_id=request_id)
         self.generation_steps = generation_steps
 
 
@@ -102,6 +102,7 @@ class PredictorModelRunner(ModelRunner):
         max_bs = min(self.config.max_num_seqs, 512)
         max_num_blocks = (config.max_model_len + self.block_size - 1) // self.block_size
         input_ids = torch.zeros(max_bs, dtype=torch.int64)
+        input_embeds = torch.zeros(max_bs, self.model_config.hidden_size)
         generation_steps = torch.zeros(max_bs, dtype=torch.int32)
         positions = torch.zeros(max_bs, dtype=torch.int64)
         slot_mapping = torch.zeros(max_bs, dtype=torch.int32)
@@ -115,8 +116,9 @@ class PredictorModelRunner(ModelRunner):
         for bs in reversed(self.graph_bs):
             graph = torch.cuda.CUDAGraph()
             set_context(False, slot_mapping=slot_mapping[:bs], context_lens=context_lens[:bs], block_tables=block_tables[:bs])
-            input_embeds = self.model.get_input_embeddings(input_ids[:bs], None, generation_steps[:bs])
-            
+            input_embeds[:bs].copy_(
+                self.model.get_input_embeddings(input_ids[:bs], None, generation_steps[:bs])
+            )
             outputs[:bs] = self.model(input_embeds[:bs], positions[:bs])    # warmup
             with torch.cuda.graph(graph, self.graph_pool):
                 outputs[:bs] = self.model(input_embeds[:bs], positions[:bs])    # capture
