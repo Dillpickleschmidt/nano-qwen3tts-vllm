@@ -91,6 +91,8 @@ class Qwen3TTSInterface:
         next_talker_embeds = inputs_embeds
         if next_talker_embeds.dim() == 2:
             next_talker_embeds = next_talker_embeds.unsqueeze(0)
+        first_chunk_latency = None
+        inner_chunk_latencies = []
 
         while True:
             start = time.time()
@@ -106,7 +108,7 @@ class Qwen3TTSInterface:
 
             if last_id == 2150:
                 self.talker_llm.clear_request(request_id)
-                return audio_codes
+                break
 
             last_id_hidden = self.input_embedding(torch.tensor([last_id], device=self.device)).unsqueeze(0)
             last_hidden_state = hidden_states.unsqueeze(0).unsqueeze(0)
@@ -136,11 +138,25 @@ class Qwen3TTSInterface:
             #     exit()
 
             end = time.time()
+            chunk_latency = end - start
+            
+            if generation_step == 1:
+                first_chunk_latency = chunk_latency
+            else:
+                inner_chunk_latencies.append(chunk_latency)
+        
         pbar.close()
-    
+        
+        if first_chunk_latency is not None:
+            print(f"First chunk latency: {first_chunk_latency:.4f}s")
+        if inner_chunk_latencies:
+            avg_inner_latency = sum(inner_chunk_latencies) / len(inner_chunk_latencies)
+            print(f"Inner chunk latency: {avg_inner_latency:.4f}s")
+            
+        return audio_codes
 
 if __name__ == "__main__":
-    interface = Qwen3TTSInterface(model_path="/home/sang/work/weights/qwen3tts")
+    interface = Qwen3TTSInterface(model_path="/work/weights/qwen3tts")
     print(f"Warm up...")
     audio_codes = interface.generate_custom_voice(text="Hi there this is a test.", language="English", speaker="Vivian")
     

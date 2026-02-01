@@ -18,7 +18,7 @@ Requires Python ≥3.10, PyTorch ≥2.10, `qwen-tts`, and `transformers`.
 ### Basic TTS generation
 
 ```python
-from nano_qwen3tts_vllm.inferface import Qwen3TTSInterface
+from nano_qwen3tts_vllm.interface import Qwen3TTSInterface
 from qwen_tts import Qwen3TTSTokenizer
 import soundfile as sf
 
@@ -45,10 +45,10 @@ sf.write("output.wav", wavs[0], sr)
 ### Run from CLI
 
 ```bash
-python -m nano_qwen3tts_vllm.inferface
+python -m nano_qwen3tts_vllm.interface
 ```
 
-This runs the example in `inferface.py` (ensure `model_path` points to your Qwen3-TTS checkpoint).
+This runs the example in `interface.py` (ensure `model_path` points to your Qwen3-TTS checkpoint).
 
 ## Options
 
