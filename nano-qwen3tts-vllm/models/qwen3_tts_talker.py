@@ -26,7 +26,6 @@ class Qwen3TTSTalkerResizeMLP(nn.Module):
         self.linear_fc2 = nn.Linear(intermediate_size, output_size, bias=bias)
         self.act_fn = torch.nn.functional.silu
 
-    @torch.compile
     def forward(self, hidden_state):
         return self.linear_fc2(self.act_fn(self.linear_fc1(hidden_state)))
 
@@ -89,8 +88,8 @@ class Qwen3TTSTalkerForCausalLM(nn.Module):
         transformed = {}
 
         for key, value in state_dict.items():
-            # Skip code_predictor keys only
-            if key.startswith("talker.code_predictor."):
+            # Skip code_predictor and speaker_encoder keys
+            if key.startswith("talker.code_predictor.") or key.startswith("speaker_encoder."):
                 continue
 
             # Remove "talker." prefix

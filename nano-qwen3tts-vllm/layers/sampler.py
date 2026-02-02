@@ -9,9 +9,7 @@ class Sampler(nn.Module):
         
     def apply_temperature(self, logits: torch.Tensor, temperatures: torch.Tensor):
         return logits.float().div_(temperatures.unsqueeze(dim=1))
-    
 
-    @torch.compile
     def forward(self, logits: torch.Tensor, temperatures: torch.Tensor, top_k: int=50, top_p: float=1.0):
         logits = logits.float().div_(temperatures.unsqueeze(dim=1))
         

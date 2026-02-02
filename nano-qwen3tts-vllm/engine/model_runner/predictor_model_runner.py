@@ -33,18 +33,28 @@ class PredictorModelRunner(ModelRunner):
         with open(os.path.join(config.model, "config.json"), "r") as f:
             model_config = json.load(f)
             model_config = Qwen3TTSConfig(**model_config)
-            
-        model_config = model_config
 
         model = Qwen3TTSCodePredictorForCausalLM(model_config.talker_config.code_predictor_config, model_config.talker_config)
-        
+
         self.model_config = model_config.talker_config.code_predictor_config
-        
+        self.talker_config = model_config.talker_config
+
         state_dict = load_file(
             os.path.join(config.model, "model.safetensors")
         )
-        model.load_state_dict(state_dict)   
+        model.load_state_dict(state_dict)
         return model
+
+    def warmup_model(self):
+        """Override warmup to use talker's hidden_size for input embeddings."""
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        max_num_batched_tokens, max_model_len = self.config.max_num_batched_tokens, self.config.max_model_len
+        num_seqs = min(max_num_batched_tokens // max_model_len, self.config.max_num_seqs)
+        # Use talker's hidden_size since input goes through projection
+        seqs = [Sequence([], input_embeds=torch.zeros(1, 8, self.talker_config.hidden_size)) for _ in range(num_seqs)]
+        self.run(seqs, True)
+        torch.cuda.empty_cache()
 
     
     @torch.inference_mode()
@@ -102,7 +112,8 @@ class PredictorModelRunner(ModelRunner):
         max_bs = min(self.config.max_num_seqs, 512)
         max_num_blocks = (config.max_model_len + self.block_size - 1) // self.block_size
         input_ids = torch.zeros(max_bs, dtype=torch.int64)
-        input_embeds = torch.zeros(max_bs, self.model_config.hidden_size)
+        # Use talker's hidden_size for input_embeds since they go through projection
+        input_embeds = torch.zeros(max_bs, self.talker_config.hidden_size)
         generation_steps = torch.zeros(max_bs, dtype=torch.int32)
         positions = torch.zeros(max_bs, dtype=torch.int64)
         slot_mapping = torch.zeros(max_bs, dtype=torch.int32)

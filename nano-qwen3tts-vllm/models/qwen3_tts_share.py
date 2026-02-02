@@ -1,6 +1,7 @@
 import torch
 from torch import nn
-import torch.distributed as dist
+
+from nano_qwen3tts_vllm.utils.distributed import get_world_size
 
 
 from nano_qwen3tts_vllm.layers.layernorm import Qwen3TTSRMSNorm
@@ -24,7 +25,7 @@ class Qwen3TTSAttention(nn.Module):
         rope_scaling: dict | None = None,
     ) -> None:
         super().__init__()
-        tp_size = dist.get_world_size()
+        tp_size = get_world_size()
         self.total_num_heads = num_heads
         assert self.total_num_heads % tp_size == 0
         self.num_heads = self.total_num_heads // tp_size
@@ -111,9 +112,8 @@ class Qwen3TTSAttention(nn.Module):
         
         output = self.o_proj(attn_output)
         return output
-    
 
-@torch.compile
+
 class Qwen3TTSTalkerTextMLP(nn.Module):
     def __init__(
         self,

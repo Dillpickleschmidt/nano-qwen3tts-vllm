@@ -5,7 +5,9 @@ import uuid
 import torch
 import soundfile as sf
 import time
+
 from nano_qwen3tts_vllm.utils.prompt import prepare_custom_voice_prompt
+from nano_qwen3tts_vllm.utils.voice_clone import load_voice_prompt, prepare_speaker_embeds
 from nano_qwen3tts_vllm.processor import Qwen3TTSProcessor
 from nano_qwen3tts_vllm.utils.generation import prepare_inputs
 from nano_qwen3tts_vllm.llm import TalkerLLM, PredictorLLM
@@ -107,6 +109,114 @@ class Qwen3TTSInterface:
             SamplingParams(temperature=1.0, max_tokens=1),
             SamplingParams(temperature=0.9, max_tokens=17),
         )
+
+    def generate_voice_clone(
+        self,
+        text: str,
+        voice_clone_prompt: dict,
+        language: str = "english",
+        temperature: float = 0.9,
+        top_p: float = 1.0,
+    ):
+        """Generate speech using a pre-loaded voice clone prompt.
+
+        Args:
+            text: Text to synthesize
+            voice_clone_prompt: Dict from load_voice_prompt() with keys:
+                ref_code, ref_spk_embedding, x_vector_only_mode, icl_mode, ref_text
+            language: Language code (e.g., "english", "chinese", "auto")
+            temperature: Sampling temperature for predictor
+            top_p: Top-p sampling for predictor
+
+        Yields:
+            List of 16 codebook IDs per generation step
+        """
+        if self.zmq_bridge is not None:
+            raise RuntimeError("generate_voice_clone requires zmq_bridge=None; use sync mode")
+
+        input_text = f"<|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n"
+        input_ids = [self.processor(text=input_text, return_tensors="pt").input_ids.to(self.device)]
+
+        ref_ids = None
+        is_icl_mode = voice_clone_prompt["icl_mode"][0]
+        ref_code = voice_clone_prompt["ref_code"][0] if voice_clone_prompt.get("ref_code") else None
+
+        if ref_code is not None and is_icl_mode:
+            ref_text = voice_clone_prompt["ref_text"][0]
+            if ref_text:
+                ref_input_text = f"<|im_start|>assistant\n{ref_text}<|im_end|>"
+                ref_ids = [self.processor(text=ref_input_text, return_tensors="pt").input_ids.to(self.device)]
+
+        voice_clone_spk_embeds = prepare_speaker_embeds(
+            voice_clone_prompt, self.device, torch.bfloat16
+        )
+
+        generate_icl_prompt_fn = None
+        if ref_code is not None and is_icl_mode:
+            generate_icl_prompt_fn = self._make_icl_prompt_fn()
+
+        talker_input_embeds, trailing_text_hiddens, tts_pad_embed, talker_attention_mask = prepare_inputs(
+            config=self.model_config,
+            input_ids=input_ids,
+            ref_ids=ref_ids,
+            voice_clone_prompt=voice_clone_prompt,
+            languages=[language],
+            non_streaming_mode=False,
+            text_embedding=self.text_embedding,
+            input_embedding=self.input_embedding,
+            text_projection=self.text_projection,
+            device=self.device,
+            voice_clone_spk_embeds=voice_clone_spk_embeds,
+            generate_icl_prompt_fn=generate_icl_prompt_fn,
+        )
+
+        yield from self._generate_caller_driven(
+            talker_input_embeds, trailing_text_hiddens, tts_pad_embed,
+            str(uuid.uuid4()),
+            SamplingParams(temperature=1.0, max_tokens=1),
+            SamplingParams(temperature=temperature, top_p=top_p, max_tokens=17),
+        )
+
+    def _make_icl_prompt_fn(self):
+        """Create ICL prompt function for voice cloning with reference audio."""
+        text_embedding = self.text_embedding
+        input_embedding = self.input_embedding
+        text_projection = self.text_projection
+        predictor_embeddings = self.predictor_input_embeddings
+        config = self.model_config
+        device = self.device
+
+        def generate_icl_prompt(text_id, ref_id, ref_code, tts_pad_embed, tts_eos_embed, non_streaming_mode):
+            text_embed = text_projection(text_embedding(torch.cat([ref_id, text_id], dim=-1)))
+            text_embed = torch.cat([text_embed, tts_eos_embed], dim=1)
+
+            codec_embed_parts = [input_embedding(ref_code[:, :1])]
+            for i in range(1, 16):
+                codec_embed_parts.append(predictor_embeddings[i - 1](ref_code[:, i : i + 1]))
+            codec_embed = torch.cat(codec_embed_parts, dim=1).sum(1).unsqueeze(0)
+
+            codec_bos = input_embedding(
+                torch.tensor([[config.talker_config.codec_bos_id]], device=device, dtype=text_id.dtype)
+            )
+            codec_embed = torch.cat([codec_bos, codec_embed], dim=1)
+
+            text_lens, codec_lens = text_embed.shape[1], codec_embed.shape[1]
+
+            if non_streaming_mode:
+                pad_ids = torch.tensor(
+                    [[config.talker_config.codec_pad_id] * text_lens], device=device, dtype=text_id.dtype
+                )
+                icl_embed = text_embed + input_embedding(pad_ids)
+                return torch.cat([icl_embed, codec_embed + tts_pad_embed], dim=1), tts_pad_embed
+            else:
+                if text_lens > codec_lens:
+                    return text_embed[:, :codec_lens] + codec_embed, text_embed[:, codec_lens:]
+                else:
+                    padding = [tts_pad_embed] * (codec_lens - text_lens)
+                    text_embed_padded = torch.cat([text_embed] + padding, dim=1)
+                    return text_embed_padded + codec_embed, tts_pad_embed
+
+        return generate_icl_prompt
 
     async def generate_custom_voice_async(
         self, text: str, language: str = "English", speaker: str = "Vivian"

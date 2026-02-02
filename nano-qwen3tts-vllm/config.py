@@ -285,7 +285,7 @@ class Qwen3TTSTalkerCodePredictorConfig(BaseConfig):
     def __init__(
         self,
         vocab_size=2048,
-        hidden_size=1024,
+        hidden_size=2048,
         intermediate_size=3072,
         num_hidden_layers=5,
         num_attention_heads=16,
@@ -469,7 +469,7 @@ class Qwen3TTSTalkerConfig(BaseConfig):
         self,
         code_predictor_config=None,
         vocab_size=3072,
-        hidden_size=1024,
+        hidden_size=2048,
         intermediate_size=2048,
         num_hidden_layers=20,
         num_attention_heads=16,
