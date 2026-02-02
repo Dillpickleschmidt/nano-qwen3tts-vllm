@@ -31,7 +31,7 @@ class ModelRunner:
         self.rank = rank
         self.event = event
 
-        if not dist.is_initialized():
+        if self.world_size > 1 and not dist.is_initialized():
             dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank)
         torch.cuda.set_device(rank)
         # torch.set_default_dtype(hf_config.torch_dtype)
