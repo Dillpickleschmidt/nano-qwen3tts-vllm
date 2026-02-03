@@ -170,8 +170,6 @@ class Qwen3TTSInterface:
             generate_icl_prompt_fn=generate_icl_prompt_fn,
         )
 
-        self.trailing_text_token_count = trailing_text_hiddens.shape[1]
-
         yield from self._generate_caller_driven(
             talker_input_embeds, trailing_text_hiddens, tts_pad_embed,
             str(uuid.uuid4()),
