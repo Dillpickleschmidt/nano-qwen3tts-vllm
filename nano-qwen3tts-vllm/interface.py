@@ -106,7 +106,7 @@ class Qwen3TTSInterface:
         yield from self._generate_caller_driven(
             talker_input_embeds, trailing_text_hiddens, tts_pad_embed,
             str(uuid.uuid4()),
-            SamplingParams(temperature=1.0, max_tokens=1),
+            SamplingParams(temperature=0.9, max_tokens=1, repetition_penalty=1.05),
             SamplingParams(temperature=0.9, max_tokens=17),
         )
 
@@ -173,7 +173,7 @@ class Qwen3TTSInterface:
         yield from self._generate_caller_driven(
             talker_input_embeds, trailing_text_hiddens, tts_pad_embed,
             str(uuid.uuid4()),
-            SamplingParams(temperature=1.0, max_tokens=1),
+            SamplingParams(temperature=0.9, max_tokens=1, repetition_penalty=1.05),
             SamplingParams(temperature=temperature, top_p=top_p, max_tokens=17),
         )
 
@@ -254,7 +254,7 @@ class Qwen3TTSInterface:
         if self.zmq_bridge is not None:
             raise RuntimeError("When using ZMQ bridge use generate_async() after await start_zmq_tasks()")
         request_id = request_id or str(uuid.uuid4())
-        talker_sampling_params = SamplingParams(temperature=1.0, max_tokens=1)
+        talker_sampling_params = SamplingParams(temperature=0.9, max_tokens=1, repetition_penalty=1.05)
         predictor_sampling_params = SamplingParams(temperature=0.9, max_tokens=17)
         yield from self._generate_caller_driven(
             inputs_embeds, trailing_text_hiddens, tts_pad_embed,
@@ -272,7 +272,7 @@ class Qwen3TTSInterface:
         """Async generator of codebook_id chunks. ZMQ path; step() runs on event loop thread. Call await start_zmq_tasks() first."""
         if self.zmq_bridge is None:
             raise RuntimeError("generate_async requires zmq_bridge")
-        talker_sampling_params = SamplingParams(temperature=1.0, max_tokens=1)
+        talker_sampling_params = SamplingParams(temperature=0.9, max_tokens=1, repetition_penalty=1.05)
         predictor_sampling_params = SamplingParams(temperature=0.9, max_tokens=17)
         request_id = request_id or str(uuid.uuid4())
         request_queue: asyncio.Queue = asyncio.Queue()
@@ -283,7 +283,13 @@ class Qwen3TTSInterface:
             if next_talker_embeds.dim() == 2:
                 next_talker_embeds = next_talker_embeds.unsqueeze(0)
             generation_step = 0
-            self.talker_llm.add_request([next_talker_embeds], talker_sampling_params, request_id=request_id)
+            talker_generated_ids: list[int] = []
+            step_params = SamplingParams(
+                temperature=talker_sampling_params.temperature,
+                max_tokens=talker_sampling_params.max_tokens,
+                repetition_penalty=talker_sampling_params.repetition_penalty,
+            )
+            self.talker_llm.add_request([next_talker_embeds], step_params, request_id=request_id)
 
             while True:
                 engine_type, msg_type, payload = await request_queue.get()
@@ -294,6 +300,7 @@ class Qwen3TTSInterface:
                     token_ids = payload["token_ids"]
                     hidden_states = payload.get("hidden_states")
                     last_id = token_ids[-1]
+                    talker_generated_ids.append(last_id)
                     if last_id == 2150:
                         self.talker_llm.clear_request(request_id)
                         break
@@ -327,7 +334,13 @@ class Qwen3TTSInterface:
                     else:
                         next_talker_embeds = next_talker_embeds + tts_pad_embed
                     generation_step += 1
-                    self.talker_llm.add_request([next_talker_embeds], talker_sampling_params, request_id=request_id)
+                    step_params = SamplingParams(
+                        temperature=talker_sampling_params.temperature,
+                        max_tokens=talker_sampling_params.max_tokens,
+                        repetition_penalty=talker_sampling_params.repetition_penalty,
+                        prev_token_ids=list(talker_generated_ids),
+                    )
+                    self.talker_llm.add_request([next_talker_embeds], step_params, request_id=request_id)
         finally:
             async with self._queues_lock:
                 self._request_queues.pop(request_id, None)
@@ -342,12 +355,19 @@ class Qwen3TTSInterface:
         predictor_sampling_params: SamplingParams,
     ):
         generation_step = 0
+        talker_generated_ids: list[int] = []
         next_talker_embeds = inputs_embeds
         if next_talker_embeds.dim() == 2:
             next_talker_embeds = next_talker_embeds.unsqueeze(0)
 
         while True:
-            self.talker_llm.add_request([next_talker_embeds], talker_sampling_params, request_id=request_id)
+            step_params = SamplingParams(
+                temperature=talker_sampling_params.temperature,
+                max_tokens=talker_sampling_params.max_tokens,
+                repetition_penalty=talker_sampling_params.repetition_penalty,
+                prev_token_ids=list(talker_generated_ids),
+            )
+            self.talker_llm.add_request([next_talker_embeds], step_params, request_id=request_id)
             _, _, outputs_all = self.talker_llm.step_with_outputs()
             if not outputs_all:
                 self.talker_llm.clear_request(request_id)
@@ -358,6 +378,7 @@ class Qwen3TTSInterface:
                 continue
             _, _, token_ids, hidden_states, is_finished = match
             last_id = token_ids[-1]
+            talker_generated_ids.append(last_id)
             if last_id == 2150:
                 self.talker_llm.clear_request(request_id)
                 return

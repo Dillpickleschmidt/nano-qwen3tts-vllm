@@ -9,6 +9,8 @@ class SamplingParams:
     do_sample: bool = True
     top_k: int = 50
     top_p: float = 1.0
+    repetition_penalty: float = 1.0
+    prev_token_ids: list[int] | None = None
 
     def __post_init__(self):
         assert self.temperature > 1e-10, "greedy sampling is not permitted"

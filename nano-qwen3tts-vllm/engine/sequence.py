@@ -31,6 +31,8 @@ class Sequence:
         self.temperature = sampling_params.temperature
         self.max_tokens = sampling_params.max_tokens
         self.ignore_eos = sampling_params.ignore_eos
+        self.repetition_penalty = sampling_params.repetition_penalty
+        self.prev_token_ids = sampling_params.prev_token_ids or []
         self.generation_steps = 0
         self.last_hidden_state = None
 
