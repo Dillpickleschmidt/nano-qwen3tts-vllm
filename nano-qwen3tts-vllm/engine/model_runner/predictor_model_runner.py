@@ -120,7 +120,7 @@ class PredictorModelRunner(ModelRunner):
         context_lens = torch.zeros(max_bs, dtype=torch.int32)
         block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32)
         outputs = torch.zeros(max_bs, self.model_config.hidden_size)
-        self.graph_bs = [1, 2]
+        self.graph_bs = [1]
         self.graphs = {}
         self.graph_pool = None
 
